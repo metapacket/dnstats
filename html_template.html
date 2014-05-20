@@ -1,0 +1,111 @@
+
+<!doctype html>
+<html>
+	
+	<head>
+
+	<meta http-equiv="refresh" content="60" >
+	<style media="screen" type="text/css">
+	#placeholder{float:left;}
+	#stats{float:left;}
+	#noerror{clear: both;}
+	#down{position: absolute; float:left; clear:left;}
+
+	</style>
+		<title>DNS Statistics</title>
+		<script src="chart.js"></script>
+	<script language="javascript" type="text/javascript" src="jquery.js"></script>
+	<script language="javascript" type="text/javascript" src="jquery.flot.js"></script>
+	<script language="javascript" type="text/javascript" src="jquery.flot.pie.js"></script>
+		<meta name = "viewport" content = "initial-scale = 1, user-scalable = no">
+		<style>
+			canvas{
+			}
+		</style>
+	</head>
+	<body>
+
+<table align="center">
+<tr>
+<td>
+<div id="placeholder" style="width:600px;height:300px">
+</div>
+
+
+
+	<script>
+
+
+	PIE_CHART_DATA
+
+	$.plot('#placeholder', data, {
+	    series: {
+	        pie: {
+	            show: true
+	        }
+	    }
+	});	
+
+
+	</script>
+</td>
+<td>
+<div id="stats" style="border: 1px solid blue; font-family: Cambria, serif; padding: 10px;">
+GENERAL_STATISTICS
+</div>
+</td></tr>
+</table>
+</div>
+<br/>
+<div id="noerror" align="center">
+	<p>No Error, NX Domain</p>
+		<canvas id="canvas1" height="450" width="1100"></canvas>
+
+
+	<script>
+
+		var barChartData = {
+			TIME_AXIS_STRING1
+			datasets : [
+				{
+					fillColor : "rgba(151,187,205,0.5)",
+					strokeColor : "rgba(151,187,205,1)",
+					RESPONSE_TIME_STRING1
+				}
+			]
+			
+		}
+
+	var myLine = new Chart(document.getElementById("canvas1").getContext("2d")).Bar(barChartData);
+
+
+	</script>
+	<p>DNS Lookup Failure</p>
+
+		<canvas id="canvas2" height="450" width="1100"></canvas>
+
+
+	<script>
+
+		var barChartData = {
+			TIME_AXIS_STRING2
+			datasets : [
+				{
+					fillColor : "rgba(151,187,205,0.5)",
+					strokeColor : "rgba(151,187,205,1)",
+					RESPONSE_TIME_STRING2
+				}
+			]
+			
+		}
+
+	var myLine = new Chart(document.getElementById("canvas2").getContext("2d")).Bar(barChartData);
+
+
+	
+	</script>
+</div>
+</div>
+	</body>
+</html>
+
