@@ -12,6 +12,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 import signal
 import ip_sniff
 import struct
+import syslog
 
 
 
@@ -362,37 +363,41 @@ def sniff_callback(src, dst, frame):
 	global packetQueue
 	
 	
-	IPversion = (struct.unpack('B',frame[0])[0] & 0xf0) >> 4
-	if IPversion != 4:
-		# not IPv4, throw packet
-		return
+	try:
+		IPversion = (struct.unpack('B',frame[0])[0] & 0xf0) >> 4
+		if IPversion != 4:
+			# not IPv4, throw packet
+			return
 
-	IHL = (struct.unpack('B',frame[0])[0] & 0xf)
-	srcIP = str(struct.unpack('B',src[0])[0]) + '.' + str(struct.unpack('B',src[1])[0]) + '.' + str(struct.unpack('B',src[2])[0]) + '.' + str(struct.unpack('B',src[3])[0])
-	dstIP = str(struct.unpack('B',dst[0])[0]) + '.' + str(struct.unpack('B',dst[1])[0]) + '.' + str(struct.unpack('B',dst[2])[0]) + '.' + str(struct.unpack('B',dst[3])[0])
-	protocol = struct.unpack('B',frame[9])[0]
+		IHL = (struct.unpack('B',frame[0])[0] & 0xf)
+		srcIP = str(struct.unpack('B',src[0])[0]) + '.' + str(struct.unpack('B',src[1])[0]) + '.' + str(struct.unpack('B',src[2])[0]) + '.' + str(struct.unpack('B',src[3])[0])
+		dstIP = str(struct.unpack('B',dst[0])[0]) + '.' + str(struct.unpack('B',dst[1])[0]) + '.' + str(struct.unpack('B',dst[2])[0]) + '.' + str(struct.unpack('B',dst[3])[0])
+		protocol = struct.unpack('B',frame[9])[0]
 
-	if protocol != 17:
-		# not UDP, throw packet
-		return
+		if protocol != 17:
+			# not UDP, throw packet
+			return
 	
-	udp_frame = frame[IHL*4:]
+		udp_frame = frame[IHL*4:]
 
-	srcPort = struct.unpack('>H',udp_frame[0:2])[0]
-	dstPort = struct.unpack('>H',udp_frame[2:4])[0]
+		srcPort = struct.unpack('>H',udp_frame[0:2])[0]
+		dstPort = struct.unpack('>H',udp_frame[2:4])[0]
 
-	if srcPort != MetaDNSPacket.DNS_PORT and dstPort != MetaDNSPacket.DNS_PORT:
-		# not DNS, throw packet
-		return
+		if srcPort != MetaDNSPacket.DNS_PORT and dstPort != MetaDNSPacket.DNS_PORT:
+			# not DNS, throw packet
+			return
 
-	dns_frame = udp_frame[8:]
+		dns_frame = udp_frame[8:]
 
-	id = struct.unpack('>H',dns_frame[0:2])[0]
-	rcode = (struct.unpack('B',dns_frame[3])[0] & 0xf)
+		id = struct.unpack('>H',dns_frame[0:2])[0]
+		rcode = (struct.unpack('B',dns_frame[3])[0] & 0xf)
 
 
-	dnsPacket = DNSPacket(time.time(), srcIP, dstIP, srcPort, dstPort, rcode, id)
-	packetQueue.put(dnsPacket)
+		dnsPacket = DNSPacket(time.time(), srcIP, dstIP, srcPort, dstPort, rcode, id)
+		packetQueue.put(dnsPacket)
+	
+	except Exception, e:
+		syslog.syslog(str(e))
 		
 
 
@@ -417,6 +422,8 @@ def main():
 
 	if not options.interface:
 	    parser.error('interface is not given')
+
+	syslog.openlog("dnstats")
 
 	threading.Thread(target=ChartServerThread, args = [int(options.webserver_port)]).start()
 
@@ -450,7 +457,7 @@ def main():
 			elif e.errno == 19:
 				print "interface %s not working" % options.interface
 		except Exception, e:
-			print e
+			syslog.syslog(str(e))
 			
 	else:
 		pcapRecords = rdpcap(pcapFile)
