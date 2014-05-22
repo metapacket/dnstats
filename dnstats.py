@@ -10,6 +10,8 @@ import Queue
 import threading
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 import signal
+import ip_sniff
+import struct
 
 
 
@@ -17,17 +19,9 @@ def signal_handler(signal, frame):
 	os.kill(os.getpid(), 9)
         sys.exit(0)
 
-# ./dnstats.py -f ns1.port53.cap -i "38.118.79.167 38.118.79.169 38.118.79.38 38.118.79.39"
-
-
-#NOT_DNS_FILE = 'not_dns_udp.pcap'
-#NO_RESPONSE_FILE = 'dns_request_with_no_response.pcap'
-#NO_REQUEST_FILE = 'dns_response_with_no_request.pcap'
-
 
 def ChartServerThread(port):
 
-	sys.stdout = file("/dev/null","w")
 	server = HTTPServer(("localhost",port), ChartServerHandler)
 	server.serve_forever()
 
@@ -39,7 +33,6 @@ class ChartServerHandler(BaseHTTPRequestHandler):
 		global metaDNSPacket
 
 		
-		print 1
 		if (self.path == "/jquery.js" or self.path == "/jquery.flot.js" or self.path == "/jquery.flot.pie.js" or self.path == "/chart.js" or self.path == "/favicon.ico"):
 			self.send_response(200)
 			self.end_headers()
@@ -195,13 +188,7 @@ class MetaDNSPacket(threading.Thread):
 	
 		
 
-	def ReceivePacket(self, packet):
-
-		if not packet.summary().startswith("Ether / IP / UDP / DNS"):
-			#self.NotDNSUDPPackets.append(packet)
-			return
-
-		dnsPacket = DNSPacket(packet)
+	def ReceivePacket(self, dnsPacket):
 
 		
 		if dnsPacket.dstPort == MetaDNSPacket.DNS_PORT:
@@ -244,13 +231,14 @@ class MetaDNSPacket(threading.Thread):
 			#	self.UnassociatedResponsePackets.append(dnsPacket)
 			
 		else:
-			print 'ERROR, SHOULD NOT BE HERE, weird packet port:'
-			print dnsPacket.srcPort, dnsPacket.dstPort
+			pass
+			#print 'ERROR, SHOULD NOT BE HERE, weird packet port:'
+			#print dnsPacket.srcPort, dnsPacket.dstPort
 
 	def newRequestResponse(self, request, response):
 
 		if response.rcode not in xrange(len(MetaDNSPacket.RCODES)):
-			print 'unknown rcode: %d' % response.rcode
+			#print 'unknown rcode: %d' % response.rcode
 			return
 
 		responseTime = (response.time-request.time)
@@ -357,28 +345,78 @@ class DNSPacket(object):
 		self.dstPort = ScapyDNSPacket[UDP].dport
 		self.rcode = ScapyDNSPacket[DNS].rcode
 		self.id = ScapyDNSPacket[DNS].id
+
+	def __init__(self, time, srcIP, dstIP, srcPort, dstPort, rcode, id):
+		self.time = time
+		self.srcIP = srcIP
+		self.dstIP = dstIP
+		self.srcPort = srcPort
+		self.dstPort = dstPort
+		self.rcode = rcode
+		self.id = id
 		
 		
+
+def sniff_callback(src, dst, frame):
+
+	global packetQueue
+	
+	
+	IPversion = (struct.unpack('B',frame[0])[0] & 0xf0) >> 4
+	if IPversion != 4:
+		# not IPv4, throw packet
+		return
+
+	IHL = (struct.unpack('B',frame[0])[0] & 0xf)
+	srcIP = str(struct.unpack('B',src[0])[0]) + '.' + str(struct.unpack('B',src[1])[0]) + '.' + str(struct.unpack('B',src[2])[0]) + '.' + str(struct.unpack('B',src[3])[0])
+	dstIP = str(struct.unpack('B',dst[0])[0]) + '.' + str(struct.unpack('B',dst[1])[0]) + '.' + str(struct.unpack('B',dst[2])[0]) + '.' + str(struct.unpack('B',dst[3])[0])
+	protocol = struct.unpack('B',frame[9])[0]
+
+	if protocol != 17:
+		# not UDP, throw packet
+		return
+	
+	udp_frame = frame[IHL*4:]
+
+	srcPort = struct.unpack('>H',udp_frame[0:2])[0]
+	dstPort = struct.unpack('>H',udp_frame[2:4])[0]
+
+	if srcPort != MetaDNSPacket.DNS_PORT and dstPort != MetaDNSPacket.DNS_PORT:
+		# not DNS, throw packet
+		return
+
+	dns_frame = udp_frame[8:]
+
+	id = struct.unpack('>H',dns_frame[0:2])[0]
+	rcode = (struct.unpack('B',dns_frame[3])[0] & 0xf)
+
+
+	dnsPacket = DNSPacket(time.time(), srcIP, dstIP, srcPort, dstPort, rcode, id)
+	packetQueue.put(dnsPacket)
+		
+
 
 
 def main():
 
-	global NOT_DNS_FILE
-	global NO_RESPONSE_FILE
-	global NO_REQUEST_FILE
-
+	global packetQueue
 	global metaDNSPacket
 
 	signal.signal(signal.SIGINT, signal_handler)
 
-
-	parser = OptionParser()
+	parser = OptionParser(usage='usage: %prog [options] -i interface -d dns_server_ip')
 	parser.add_option("-f", dest="pcap_file", help="choose this option to get packets from a .pcap file instead of sniffing")
-	parser.add_option("-i", dest="server_IP_addresses", help="dns server addresses", default = "127.0.0.1")
-	#parser.add_option("-s", dest="HTML_output_file", help="HTML output file", default = "DNS_server_statistics.html")
+	parser.add_option("-d", dest="server_IP_addresses", help="dns server addresses")
 	parser.add_option("-p", dest="webserver_port", help="web server port (for live statistics)", default = "8000")
+	parser.add_option("-i", dest="interface", help="interface to bind")
 
 	(options, args) = parser.parse_args()
+
+	if not options.server_IP_addresses:
+	    parser.error('dns server ip not given')
+
+	if not options.interface:
+	    parser.error('interface is not given')
 
 	threading.Thread(target=ChartServerThread, args = [int(options.webserver_port)]).start()
 
@@ -403,59 +441,40 @@ def main():
 				firstHost = False
 				hostfilter += " host "
 				hostfilter += host
-			sniff(filter="udp port 53 and (%s)" % hostfilter, prn=lambda x:packetQueue.put(x))
+			sniff = ip_sniff.IPSniff(options.interface, sniff_callback, sniff_callback)
+			sniff.recv()
+			#sniff(filter="udp port 53 and (%s)" % hostfilter, prn=lambda x:packetQueue.put(x))
+		except socket.error, e:
+			if e.errno == 1:
+				print "not root? bitch please"
+			elif e.errno == 19:
+				print "interface %s not working" % options.interface
 		except Exception, e:
 			print e
-			print "not root? bitch please"
+			
 	else:
 		pcapRecords = rdpcap(pcapFile)
 		i = 0
-		for packet in pcapRecords:
+		for scapyPacket in pcapRecords:
+
 			if i % 1000 == 0:
 				print '#',
 				sys.stdout.flush()
 			i += 1
+
+			if not scapyPacket.summary().startswith("Ether / IP / UDP / DNS"):
+				return
+
+			dnsPacket = DNSPacket(scapyPacket)
+
+			
 			metaDNSPacket.mutex.acquire()
-			metaDNSPacket.ReceivePacket(packet)
+			metaDNSPacket.ReceivePacket(dnsPacket)
 			metaDNSPacket.mutex.release()
 
 	
 	signal_handler(signal.SIGINT,0)	
-	return
 
-
-
-	NOT_DNS_FILE = pcapFile[:-4] + '_' + NOT_DNS_FILE
-	NO_RESPONSE_FILE = pcapFile[:-4] + '_' + NO_RESPONSE_FILE
-	NO_REQUEST_FILE = pcapFile[:-4] + '_' + NO_REQUEST_FILE
-
-	scapyDnsPackets = []
-	for packet in pcapRecords:
-		if packet.summary().startswith("Ether / IP / UDP / DNS"):
-			scapyDnsPackets.append(packet)
-		else:
-			NotDNSUDPPackets.append(packet)
-
-	
-	
-	
-	#wrpcap(NOT_DNS_FILE, NotDNSUDPPackets)
-
-
-	"""
-	# make the cap files for unanswered request and unassociated response packets
-
-	UnansweredRequestScapyPackets = [packet.originalPacket for packet in UnansweredRequestPackets]
-	wrpcap(NO_RESPONSE_FILE, UnansweredRequestScapyPackets)
-
-	UnassociatedResponseScapyPackets = [packet.originalPacket for packet in UnassociatedResponsePackets]
-	wrpcap(NO_REQUEST_FILE, UnassociatedResponseScapyPackets)
-	"""
-
-
-
-
-	
 	
 
 
